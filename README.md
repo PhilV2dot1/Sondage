@@ -1,5 +1,7 @@
 # Sondage
 
+Contrat sur Celo : 0xefdfba94544fc85074267307c8753def4866b931
+
 Créer et gérer des sondages :
 creerSondage(question, options[], dureeEnSecondes)
 
