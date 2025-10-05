@@ -1,0 +1,279 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract SystemeSondage {
+    
+    struct Option {
+        string texte;
+        uint256 nombreVotes;
+    }
+    
+    struct Sondage {
+        address createur;
+        string question;
+        Option[] options;
+        mapping(address => bool) aVote;
+        uint256 dateCreation;
+        uint256 dateFin;
+        bool actif;
+        uint256 totalVotes;
+    }
+    
+    mapping(uint256 => Sondage) public sondages;
+    uint256 public nombreSondages;
+    
+    // Mapping pour suivre les sondages créés par utilisateur
+    mapping(address => uint256[]) public sondagesParCreateur;
+    
+    // Événements
+    event SondageCree(uint256 indexed idSondage, address indexed createur, string question, uint256 nombreOptions);
+    event VoteEnregistre(uint256 indexed idSondage, address indexed votant, uint256 optionChoisie);
+    event SondageFerme(uint256 indexed idSondage, address indexed createur);
+    
+    // Créer un nouveau sondage
+    function creerSondage(
+        string memory _question,
+        string[] memory _options,
+        uint256 _dureeEnSecondes
+    ) public returns (uint256) {
+        require(bytes(_question).length > 0, "La question ne peut pas etre vide");
+        require(_options.length >= 2, "Il faut au moins 2 options");
+        require(_options.length <= 10, "Maximum 10 options");
+        require(_dureeEnSecondes > 0, "La duree doit etre positive");
+        
+        uint256 idSondage = nombreSondages;
+        nombreSondages++;
+        
+        Sondage storage nouveauSondage = sondages[idSondage];
+        nouveauSondage.createur = msg.sender;
+        nouveauSondage.question = _question;
+        nouveauSondage.dateCreation = block.timestamp;
+        nouveauSondage.dateFin = block.timestamp + _dureeEnSecondes;
+        nouveauSondage.actif = true;
+        nouveauSondage.totalVotes = 0;
+        
+        // Ajouter les options
+        for (uint256 i = 0; i < _options.length; i++) {
+            require(bytes(_options[i]).length > 0, "Une option ne peut pas etre vide");
+            nouveauSondage.options.push(Option({
+                texte: _options[i],
+                nombreVotes: 0
+            }));
+        }
+        
+        sondagesParCreateur[msg.sender].push(idSondage);
+        
+        emit SondageCree(idSondage, msg.sender, _question, _options.length);
+        
+        return idSondage;
+    }
+    
+    // Voter pour une option
+    function voter(uint256 _idSondage, uint256 _optionIndex) public {
+        require(_idSondage < nombreSondages, "Ce sondage n'existe pas");
+        
+        Sondage storage sondage = sondages[_idSondage];
+        
+        require(sondage.actif, "Ce sondage est ferme");
+        require(block.timestamp <= sondage.dateFin, "Ce sondage est termine");
+        require(!sondage.aVote[msg.sender], "Vous avez deja vote");
+        require(_optionIndex < sondage.options.length, "Option invalide");
+        
+        // Enregistrer le vote
+        sondage.aVote[msg.sender] = true;
+        sondage.options[_optionIndex].nombreVotes++;
+        sondage.totalVotes++;
+        
+        emit VoteEnregistre(_idSondage, msg.sender, _optionIndex);
+    }
+    
+    // Fermer un sondage manuellement
+    function fermerSondage(uint256 _idSondage) public {
+        require(_idSondage < nombreSondages, "Ce sondage n'existe pas");
+        
+        Sondage storage sondage = sondages[_idSondage];
+        
+        require(msg.sender == sondage.createur, "Seul le createur peut fermer le sondage");
+        require(sondage.actif, "Le sondage est deja ferme");
+        
+        sondage.actif = false;
+        
+        emit SondageFerme(_idSondage, msg.sender);
+    }
+    
+    // Obtenir les informations d'un sondage
+    function obtenirInfosSondage(uint256 _idSondage) public view returns (
+        address createur,
+        string memory question,
+        uint256 nombreOptions,
+        uint256 dateCreation,
+        uint256 dateFin,
+        bool actif,
+        uint256 totalVotes,
+        bool aVoteUtilisateur
+    ) {
+        require(_idSondage < nombreSondages, "Ce sondage n'existe pas");
+        
+        Sondage storage sondage = sondages[_idSondage];
+        
+        return (
+            sondage.createur,
+            sondage.question,
+            sondage.options.length,
+            sondage.dateCreation,
+            sondage.dateFin,
+            sondage.actif && block.timestamp <= sondage.dateFin,
+            sondage.totalVotes,
+            sondage.aVote[msg.sender]
+        );
+    }
+    
+    // Obtenir une option spécifique
+    function obtenirOption(uint256 _idSondage, uint256 _optionIndex) public view returns (
+        string memory texte,
+        uint256 nombreVotes
+    ) {
+        require(_idSondage < nombreSondages, "Ce sondage n'existe pas");
+        require(_optionIndex < sondages[_idSondage].options.length, "Option invalide");
+        
+        Option memory option = sondages[_idSondage].options[_optionIndex];
+        return (option.texte, option.nombreVotes);
+    }
+    
+    // Obtenir toutes les options d'un sondage
+    function obtenirToutesLesOptions(uint256 _idSondage) public view returns (
+        string[] memory textes,
+        uint256[] memory votes
+    ) {
+        require(_idSondage < nombreSondages, "Ce sondage n'existe pas");
+        
+        Sondage storage sondage = sondages[_idSondage];
+        uint256 nombreOptions = sondage.options.length;
+        
+        textes = new string[](nombreOptions);
+        votes = new uint256[](nombreOptions);
+        
+        for (uint256 i = 0; i < nombreOptions; i++) {
+            textes[i] = sondage.options[i].texte;
+            votes[i] = sondage.options[i].nombreVotes;
+        }
+        
+        return (textes, votes);
+    }
+    
+    // Obtenir les résultats avec pourcentages
+    function obtenirResultats(uint256 _idSondage) public view returns (
+        string[] memory textes,
+        uint256[] memory votes,
+        uint256[] memory pourcentages
+    ) {
+        require(_idSondage < nombreSondages, "Ce sondage n'existe pas");
+        
+        Sondage storage sondage = sondages[_idSondage];
+        uint256 nombreOptions = sondage.options.length;
+        
+        textes = new string[](nombreOptions);
+        votes = new uint256[](nombreOptions);
+        pourcentages = new uint256[](nombreOptions);
+        
+        for (uint256 i = 0; i < nombreOptions; i++) {
+            textes[i] = sondage.options[i].texte;
+            votes[i] = sondage.options[i].nombreVotes;
+            
+            // Calculer le pourcentage (multiplié par 100 pour éviter les décimales)
+            if (sondage.totalVotes > 0) {
+                pourcentages[i] = (sondage.options[i].nombreVotes * 10000) / sondage.totalVotes;
+            } else {
+                pourcentages[i] = 0;
+            }
+        }
+        
+        return (textes, votes, pourcentages);
+    }
+    
+    // Obtenir l'option gagnante
+    function obtenirOptionGagnante(uint256 _idSondage) public view returns (
+        uint256 indexGagnant,
+        string memory texteGagnant,
+        uint256 nombreVotes
+    ) {
+        require(_idSondage < nombreSondages, "Ce sondage n'existe pas");
+        
+        Sondage storage sondage = sondages[_idSondage];
+        require(sondage.options.length > 0, "Pas d'options");
+        
+        uint256 maxVotes = 0;
+        uint256 indexMax = 0;
+        
+        for (uint256 i = 0; i < sondage.options.length; i++) {
+            if (sondage.options[i].nombreVotes > maxVotes) {
+                maxVotes = sondage.options[i].nombreVotes;
+                indexMax = i;
+            }
+        }
+        
+        return (indexMax, sondage.options[indexMax].texte, maxVotes);
+    }
+    
+    // Vérifier si un utilisateur a voté
+    function aVote(uint256 _idSondage, address _utilisateur) public view returns (bool) {
+        require(_idSondage < nombreSondages, "Ce sondage n'existe pas");
+        return sondages[_idSondage].aVote[_utilisateur];
+    }
+    
+    // Obtenir les sondages créés par un utilisateur
+    function obtenirSondagesCreateur(address _createur) public view returns (uint256[] memory) {
+        return sondagesParCreateur[_createur];
+    }
+    
+    // Obtenir mes sondages
+    function obtenirMesSondages() public view returns (uint256[] memory) {
+        return sondagesParCreateur[msg.sender];
+    }
+    
+    // Vérifier si un sondage est encore actif
+    function estActif(uint256 _idSondage) public view returns (bool) {
+        require(_idSondage < nombreSondages, "Ce sondage n'existe pas");
+        
+        Sondage storage sondage = sondages[_idSondage];
+        return sondage.actif && block.timestamp <= sondage.dateFin;
+    }
+    
+    // Obtenir le temps restant pour un sondage
+    function obtenirTempsRestant(uint256 _idSondage) public view returns (uint256) {
+        require(_idSondage < nombreSondages, "Ce sondage n'existe pas");
+        
+        Sondage storage sondage = sondages[_idSondage];
+        
+        if (block.timestamp >= sondage.dateFin) {
+            return 0;
+        }
+        
+        return sondage.dateFin - block.timestamp;
+    }
+    
+    // Obtenir la liste de tous les sondages actifs
+    function obtenirSondagesActifs() public view returns (uint256[] memory) {
+        uint256 compteur = 0;
+        
+        // Compter les sondages actifs
+        for (uint256 i = 0; i < nombreSondages; i++) {
+            if (estActif(i)) {
+                compteur++;
+            }
+        }
+        
+        // Créer le tableau
+        uint256[] memory sondagesActifs = new uint256[](compteur);
+        uint256 index = 0;
+        
+        for (uint256 i = 0; i < nombreSondages; i++) {
+            if (estActif(i)) {
+                sondagesActifs[index] = i;
+                index++;
+            }
+        }
+        
+        return sondagesActifs;
+    }
+}
